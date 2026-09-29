@@ -1224,11 +1224,30 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
     }
 
     @objc private func showAbout() {
-        let alert = NSAlert()
-        alert.messageText = tr("about")
-        alert.informativeText = "A temporary text tray. It does not save text, track clipboard history, or modify the system clipboard unless you explicitly copy."
-        alert.addButton(withTitle: tr("ok"))
-        alert.runModal()
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: aboutCredits()])
+    }
+
+    private func aboutCredits() -> NSAttributedString {
+        let websiteURL = URL(string: "https://jingyuan-zheng.github.io")!
+        let repositoryURL = URL(string: "https://github.com/Jingyuan-Zheng/TextTray")!
+        let authorTitle = language == .chinese ? "作者：Jingyuan Zheng" : "Created by Jingyuan Zheng"
+        let websiteTitle = language == .chinese ? "个人网站" : "Personal Website"
+        let repositoryTitle = language == .chinese ? "GitHub 仓库" : "GitHub Repository"
+        let openSourceTitle = language == .chinese ? "开源项目 · MIT 许可证" : "Open source · MIT License"
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        let credits = NSMutableAttributedString(
+            string: "\(authorTitle)\n\n\(websiteTitle)\n\(repositoryTitle)\n\n\(openSourceTitle)",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                .paragraphStyle: paragraphStyle
+            ]
+        )
+        let text = credits.string as NSString
+        credits.addAttribute(.link, value: websiteURL, range: text.range(of: websiteTitle))
+        credits.addAttribute(.link, value: repositoryURL, range: text.range(of: repositoryTitle))
+        credits.addAttribute(.link, value: repositoryURL, range: text.range(of: openSourceTitle))
+        return credits
     }
 
     @objc private func showPreferences() {
