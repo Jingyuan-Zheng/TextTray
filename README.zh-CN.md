@@ -106,7 +106,7 @@ Text Tray 的 AI 文本动作适合对临时文本做快速结构化处理，例
 
 ## 安装
 
-从 Release 下载 `TextTray.zip`，解压后打开 `Text Tray.app`。
+从 Release 下载 `TextTray-1.1.0.dmg`，打开后将 `Text Tray.app` 拖到“应用程序”文件夹。
 
 如果 macOS 提示安全确认，可以在 Finder 中 Control-click 后选择打开，或在系统设置里允许。
 

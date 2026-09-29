@@ -109,7 +109,7 @@ Use system Apple Intelligence writing assistance directly in the editor when mac
 
 ## Install
 
-Download `TextTray.zip` from the release assets, unzip it, and open `Text Tray.app`.
+Download `TextTray-1.1.0.dmg` from the release assets, open it, and drag `Text Tray.app` to Applications.
 
 If macOS asks for confirmation when opening the app, approve it in System Settings or open it from Finder with Control-click > Open.
 
