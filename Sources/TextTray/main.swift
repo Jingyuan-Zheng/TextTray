@@ -1,5 +1,6 @@
 import Cocoa
 import FoundationModels
+import NaturalLanguage
 import SwiftUI
 import Translation
 
@@ -18,11 +19,42 @@ private struct ToolMessageError: LocalizedError {
 
 private enum PreferenceKey {
     static let language = "interfaceLanguage"
+    static let translationPrimaryLanguage = "translationPrimaryLanguage"
+    static let translationSecondaryLanguage = "translationSecondaryLanguage"
     static let fontSize = "fontSize"
     static let isPinned = "isPinned"
     static let showsLineNumbers = "showsLineNumbers"
     static let wrapsText = "wrapsText"
     static let showsStats = "showsStats"
+}
+
+private enum TranslationLanguage: String, CaseIterable {
+    case chinese = "zh"
+    case english = "en"
+    case spanish = "es"
+    case german = "de"
+    case french = "fr"
+    case italian = "it"
+    case portuguese = "pt"
+
+    func title(for interfaceLanguage: InterfaceLanguage) -> String {
+        switch (self, interfaceLanguage) {
+        case (.chinese, .english): return "Chinese"
+        case (.english, .english): return "English"
+        case (.spanish, .english): return "Spanish"
+        case (.german, .english): return "German"
+        case (.french, .english): return "French"
+        case (.italian, .english): return "Italian"
+        case (.portuguese, .english): return "Portuguese"
+        case (.chinese, .chinese): return "中文"
+        case (.english, .chinese): return "英文"
+        case (.spanish, .chinese): return "西班牙语"
+        case (.german, .chinese): return "德语"
+        case (.french, .chinese): return "法语"
+        case (.italian, .chinese): return "意大利语"
+        case (.portuguese, .chinese): return "葡萄牙语"
+        }
+    }
 }
 
 private enum SaveTextFormat: CaseIterable {
@@ -320,12 +352,7 @@ private func appleIntelligenceUnavailableMessage(for availability: SystemLanguag
 }
 
 @available(macOS 26.0, *)
-private func systemTranslate(text: String, targetLanguageCode: String) async throws -> String {
-    let sourceLanguageCode = inferredSourceLanguageCode(for: text)
-    guard sourceLanguageCode != targetLanguageCode else {
-        throw ToolMessageError(errorDescription: "The text appears to already be in the target language.")
-    }
-
+private func systemTranslate(text: String, sourceLanguageCode: String, targetLanguageCode: String) async throws -> String {
     let session = TranslationSession(
         installedSource: Locale.Language(languageCode: Locale.LanguageCode(sourceLanguageCode)),
         target: Locale.Language(languageCode: Locale.LanguageCode(targetLanguageCode))
@@ -335,17 +362,20 @@ private func systemTranslate(text: String, targetLanguageCode: String) async thr
     return response.targetText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
 }
 
-private func inferredSourceLanguageCode(for text: String) -> String {
-    if text.unicodeScalars.contains(where: { (0x3040...0x30FF).contains(Int($0.value)) }) {
-        return "ja"
+private func detectedTranslationLanguage(in text: String) -> TranslationLanguage? {
+    let recognizer = NLLanguageRecognizer()
+    recognizer.processString(text)
+
+    switch recognizer.dominantLanguage?.rawValue {
+    case "zh", "zh-Hans", "zh-Hant": return .chinese
+    case "en": return .english
+    case "es": return .spanish
+    case "de": return .german
+    case "fr": return .french
+    case "it": return .italian
+    case "pt": return .portuguese
+    default: return nil
     }
-    if text.unicodeScalars.contains(where: { (0xAC00...0xD7AF).contains(Int($0.value)) }) {
-        return "ko"
-    }
-    if text.unicodeScalars.contains(where: { (0x4E00...0x9FFF).contains(Int($0.value)) }) {
-        return "zh"
-    }
-    return "en"
 }
 
 private final class LineNumberRulerView: NSView {
@@ -442,6 +472,9 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
     private let initialText: String
 
     private var window: NSWindow?
+    private var preferencesWindow: NSWindow?
+    private var translationPrimaryLanguagePopup: NSPopUpButton?
+    private var translationSecondaryLanguagePopup: NSPopUpButton?
     private var rootView: NSVisualEffectView?
     private var scrollView: NSScrollView?
     private var textView: ClipboardTextView?
@@ -472,6 +505,8 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
     private var statusHideWorkItem: DispatchWorkItem?
 
     private var language: InterfaceLanguage = .english
+    private var translationPrimaryLanguage: TranslationLanguage = .chinese
+    private var translationSecondaryLanguage: TranslationLanguage = .english
     private var lastLoadedText: String
     private var previousProcessedText: String?
     private var fontSize = defaultFontSize
@@ -520,6 +555,16 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
             break
         }
 
+        if let savedPrimaryLanguage = defaults.string(forKey: PreferenceKey.translationPrimaryLanguage),
+           let parsedPrimaryLanguage = TranslationLanguage(rawValue: savedPrimaryLanguage) {
+            translationPrimaryLanguage = parsedPrimaryLanguage
+        }
+        if let savedSecondaryLanguage = defaults.string(forKey: PreferenceKey.translationSecondaryLanguage),
+           let parsedSecondaryLanguage = TranslationLanguage(rawValue: savedSecondaryLanguage),
+           parsedSecondaryLanguage != translationPrimaryLanguage {
+            translationSecondaryLanguage = parsedSecondaryLanguage
+        }
+
         if let savedFontSize = defaults.object(forKey: PreferenceKey.fontSize) as? Double {
             fontSize = min(maximumFontSize, max(minimumFontSize, CGFloat(savedFontSize)))
         }
@@ -540,6 +585,8 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
     private func savePreferences() {
         let defaults = UserDefaults.standard
         defaults.set(language == .chinese ? "chinese" : "english", forKey: PreferenceKey.language)
+        defaults.set(translationPrimaryLanguage.rawValue, forKey: PreferenceKey.translationPrimaryLanguage)
+        defaults.set(translationSecondaryLanguage.rawValue, forKey: PreferenceKey.translationSecondaryLanguage)
         defaults.set(Double(fontSize), forKey: PreferenceKey.fontSize)
         defaults.set(isPinned, forKey: PreferenceKey.isPinned)
         defaults.set(showsLineNumbers, forKey: PreferenceKey.showsLineNumbers)
@@ -643,9 +690,13 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
             case "copyResult": return "Copy Result"
             case "appendResult": return "Append to End"
             case "replaceOriginal": return "Replace Original"
-            case "translateChinese": return "Translate to Chinese"
-            case "translateEnglish": return "Translate to English"
-            case "translateBilingual": return "Chinese-English Bilingual"
+            case "translateBilingual": return "Bilingual"
+            case "translationLanguages": return "Bilingual Languages"
+            case "translationPrimaryLanguage": return "First language"
+            case "translationSecondaryLanguage": return "Second language"
+            case "save": return "Save"
+            case "chooseDifferentLanguages": return "Choose two different languages for bilingual translation."
+            case "bilingualLanguageMismatch": return "The text must be in one of the two languages selected in Preferences."
             case "trim": return "Trim"
             case "blankLines": return "Remove Blank Lines"
             case "pdfBreaks": return "Repair PDF Line Breaks"
@@ -674,7 +725,7 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
             case "aiVersion": return "Apple Intelligence actions require macOS 26 or later."
             case "translateVersion": return "System translation actions require macOS 26 or later."
             case "alreadyTarget": return "The text appears to already be in the target language."
-            case "preferencesInfo": return "Language, pinning, font size, line numbers, word wrap, and statistics display are saved for future launches. Temporary text is never saved."
+            case "preferencesInfo": return "Choose the two languages used by Bilingual translation. Other display preferences are saved automatically. Temporary text is never saved."
             case "customPromptMessage": return "Enter an instruction for the selected text or full document."
             case "customPromptPlaceholder": return "Instruction"
             default: return key
@@ -743,9 +794,13 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
             case "copyResult": return "复制结果"
             case "appendResult": return "追加到末尾"
             case "replaceOriginal": return "替换原文"
-            case "translateChinese": return "翻译为中文"
-            case "translateEnglish": return "翻译为英文"
-            case "translateBilingual": return "中英对照"
+            case "translateBilingual": return "双语"
+            case "translationLanguages": return "双语语言"
+            case "translationPrimaryLanguage": return "第一语言"
+            case "translationSecondaryLanguage": return "第二语言"
+            case "save": return "保存"
+            case "chooseDifferentLanguages": return "请为双语翻译选择两种不同的语言。"
+            case "bilingualLanguageMismatch": return "文本必须是“偏好设置”中选定的两种语言之一。"
             case "trim": return "去除首尾空白"
             case "blankLines": return "删除多余空行"
             case "pdfBreaks": return "合并 PDF 断行"
@@ -774,7 +829,7 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
             case "aiVersion": return "Apple 智能操作需要 macOS 26 或更新版本。"
             case "translateVersion": return "系统翻译按钮需要 macOS 26 或更新版本。"
             case "alreadyTarget": return "文本看起来已经是目标语言。"
-            case "preferencesInfo": return "语言、置顶、字号、行号、自动换行和统计信息显示会在下次启动时保留。临时文本不会保存。"
+            case "preferencesInfo": return "选择“双语”翻译使用的两种语言。其他显示偏好会自动保存；临时文本不会保存。"
             case "customPromptMessage": return "输入要应用到选中文字或全文的指令。"
             case "customPromptPlaceholder": return "指令"
             default: return key
@@ -1181,8 +1236,17 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
 
     private func buildTranslateMenu() -> NSMenu {
         let menu = NSMenu()
-        addItem(tr("translateChinese"), action: #selector(translateToChinese))
-        addItem(tr("translateEnglish"), action: #selector(translateToEnglish))
+        TranslationLanguage.allCases.forEach { translationLanguage in
+            let item = NSMenuItem(
+                title: translationMenuTitle(for: translationLanguage),
+                action: #selector(translateToLanguage(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = translationLanguage.rawValue
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
         addItem(tr("translateBilingual"), action: #selector(translateBilingual))
         return menu
 
@@ -1251,7 +1315,110 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
     }
 
     @objc private func showPreferences() {
-        showError(tr("preferencesInfo"))
+        if preferencesWindow == nil {
+            preferencesWindow = makePreferencesWindow()
+        }
+        preferencesWindow?.title = tr("preferences")
+        updatePreferenceLanguageSelections()
+        NSApp.activate(ignoringOtherApps: true)
+        preferencesWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    private func languagePopup(selected: TranslationLanguage) -> NSPopUpButton {
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        TranslationLanguage.allCases.forEach { translationLanguage in
+            popup.addItem(withTitle: translationLanguage.title(for: language))
+            popup.lastItem?.representedObject = translationLanguage.rawValue
+        }
+        popup.selectItem(withTitle: selected.title(for: language))
+        popup.target = self
+        popup.action = #selector(translationLanguageSelectionChanged(_:))
+        popup.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        return popup
+    }
+
+    private func preferenceRow(title: String, control: NSView) -> NSStackView {
+        let label = NSTextField(labelWithString: title)
+        label.alignment = .right
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        label.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        let row = NSStackView(views: [label, control])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 12
+        return row
+    }
+
+    private func selectedLanguage(from popup: NSPopUpButton) -> TranslationLanguage? {
+        guard let rawValue = popup.selectedItem?.representedObject as? String else { return nil }
+        return TranslationLanguage(rawValue: rawValue)
+    }
+
+    private func makePreferencesWindow() -> NSWindow {
+        let preferencesWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 410, height: 190),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        preferencesWindow.isReleasedWhenClosed = false
+        preferencesWindow.center()
+
+        let heading = NSTextField(labelWithString: tr("translationLanguages"))
+        heading.font = .systemFont(ofSize: 13, weight: .semibold)
+        let description = NSTextField(wrappingLabelWithString: tr("preferencesInfo"))
+        description.textColor = .secondaryLabelColor
+        description.maximumNumberOfLines = 2
+
+        let primaryLanguagePopup = languagePopup(selected: translationPrimaryLanguage)
+        let secondaryLanguagePopup = languagePopup(selected: translationSecondaryLanguage)
+        translationPrimaryLanguagePopup = primaryLanguagePopup
+        translationSecondaryLanguagePopup = secondaryLanguagePopup
+
+        let content = NSStackView(views: [
+            heading,
+            description,
+            preferenceRow(title: tr("translationPrimaryLanguage"), control: primaryLanguagePopup),
+            preferenceRow(title: tr("translationSecondaryLanguage"), control: secondaryLanguagePopup)
+        ])
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 12
+        content.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        preferencesWindow.contentView = content
+        return preferencesWindow
+    }
+
+    private func updatePreferenceLanguageSelections() {
+        translationPrimaryLanguagePopup?.selectItem(withTitle: translationPrimaryLanguage.title(for: language))
+        translationSecondaryLanguagePopup?.selectItem(withTitle: translationSecondaryLanguage.title(for: language))
+    }
+
+    @objc private func translationLanguageSelectionChanged(_ sender: NSPopUpButton) {
+        guard let primaryLanguagePopup = translationPrimaryLanguagePopup,
+              let secondaryLanguagePopup = translationSecondaryLanguagePopup,
+              let primaryLanguage = selectedLanguage(from: primaryLanguagePopup),
+              let secondaryLanguage = selectedLanguage(from: secondaryLanguagePopup)
+        else { return }
+
+        guard primaryLanguage != secondaryLanguage else {
+            updatePreferenceLanguageSelections()
+            showError(tr("chooseDifferentLanguages"))
+            return
+        }
+
+        translationPrimaryLanguage = primaryLanguage
+        translationSecondaryLanguage = secondaryLanguage
+        savePreferences()
+    }
+
+    private func translationMenuTitle(for translationLanguage: TranslationLanguage) -> String {
+        switch language {
+        case .english:
+            return "Translate to \(translationLanguage.title(for: language))"
+        case .chinese:
+            return "翻译为\(translationLanguage.title(for: language))"
+        }
     }
 
     @objc private func showFindFromMenu() {
@@ -1368,21 +1535,49 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
         runAppleIntelligence(actionName: tr("customPrompt"), instruction: prompt)
     }
 
-    @objc private func translateToChinese() {
-        runSystemTranslation(actionName: tr("translateChinese"), targetLanguageCode: "zh")
-    }
-
-    @objc private func translateToEnglish() {
-        runSystemTranslation(actionName: tr("translateEnglish"), targetLanguageCode: "en")
-    }
-
     @objc private func translateBilingual() {
         guard let text = editableTextForTool() else { return }
-        let target = inferredSourceLanguageCode(for: text) == "zh" ? "en" : "zh"
+        guard let detectedLanguage = detectedTranslationLanguage(in: text) else {
+            showError(tr("bilingualLanguageMismatch"))
+            return
+        }
+        let sourceLanguage: TranslationLanguage
+        let targetLanguage: TranslationLanguage
+        if detectedLanguage == translationPrimaryLanguage {
+            sourceLanguage = translationPrimaryLanguage
+            targetLanguage = translationSecondaryLanguage
+        } else if detectedLanguage == translationSecondaryLanguage {
+            sourceLanguage = translationSecondaryLanguage
+            targetLanguage = translationPrimaryLanguage
+        } else {
+            showError(tr("bilingualLanguageMismatch"))
+            return
+        }
         runSystemTranslation(
             actionName: tr("translateBilingual"),
-            targetLanguageCode: target,
+            sourceLanguageCode: sourceLanguage.rawValue,
+            targetLanguageCode: targetLanguage.rawValue,
             appendSourceText: true
+        )
+    }
+
+    @objc private func translateToLanguage(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let targetLanguage = TranslationLanguage(rawValue: rawValue),
+              let text = editableTextForTool()
+        else { return }
+        guard let sourceLanguage = detectedTranslationLanguage(in: text) else {
+            showError(tr("bilingualLanguageMismatch"))
+            return
+        }
+        guard sourceLanguage != targetLanguage else {
+            showError(tr("alreadyTarget"))
+            return
+        }
+        runSystemTranslation(
+            actionName: translationMenuTitle(for: targetLanguage),
+            sourceLanguageCode: sourceLanguage.rawValue,
+            targetLanguageCode: targetLanguage.rawValue
         )
     }
 
@@ -1709,21 +1904,25 @@ final class TemporaryClipboardApp: NSObject, NSApplicationDelegate, NSWindowDele
         }
     }
 
-    private func runSystemTranslation(actionName: String, targetLanguageCode: String, appendSourceText: Bool = false) {
+    private func runSystemTranslation(
+        actionName: String,
+        sourceLanguageCode: String,
+        targetLanguageCode: String,
+        appendSourceText: Bool = false
+    ) {
         guard let text = editableTextForTool() else { return }
         guard #available(macOS 26.0, *) else {
             showError(tr("translateVersion"))
             return
         }
-        if inferredSourceLanguageCode(for: text) == targetLanguageCode {
-            showError(tr("alreadyTarget"))
-            return
-        }
-
         beginAsyncOperation("\(actionName)...")
-        activeTask = Task { [text, targetLanguageCode, actionName, appendSourceText] in
+        activeTask = Task { [text, sourceLanguageCode, targetLanguageCode, actionName, appendSourceText] in
             do {
-                let translatedText = try await systemTranslate(text: text, targetLanguageCode: targetLanguageCode)
+                let translatedText = try await systemTranslate(
+                    text: text,
+                    sourceLanguageCode: sourceLanguageCode,
+                    targetLanguageCode: targetLanguageCode
+                )
                 let result = appendSourceText ? "\(text)\n\n---\n\n\(translatedText)" : translatedText
                 await MainActor.run { [weak self] in
                     guard let self else { return }

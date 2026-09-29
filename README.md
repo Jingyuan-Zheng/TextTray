@@ -58,7 +58,7 @@ Text Tray gives that temporary text a dedicated, lightweight place.
 - Extract tasks, dates, amounts, and contacts
 - Summarize requirements, explain text, check risks, draft replies, and organize text into checklists or tables
 - Use system Apple Intelligence writing assistance when available
-- Translate to Chinese, translate to English, or create a bilingual version when system translation is available
+- Supports multilingual system translation for Chinese, English, Spanish, German, French, Italian, and Portuguese, including configurable bilingual language pairs
 
 ### Preferences
 
